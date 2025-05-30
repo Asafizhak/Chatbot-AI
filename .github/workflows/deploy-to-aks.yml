@@ -68,7 +68,7 @@ jobs:
           kubectl apply -f k8s/ --namespace=chatbot-ai --validate=false
           
           # Check rollout status
-          kubectl rollout status deployment/${{ env.APP_NAME }} -n chatbot-ai --timeout=300s
+          kubectl rollout status deployment/${{ env.APP_NAME }} -n chatbot-ai --timeout=600s
           
           # Display service information
           echo "🌐 Service Details:"
