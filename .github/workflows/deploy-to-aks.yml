@@ -1,86 +1,112 @@
-name: Deploy to Azure AKS
+name: Deploy ChatBot AI to AKS
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
   workflow_dispatch:
 
 env:
-  AZURE_CONTAINER_REGISTRY: acrmsassignment2025
-  CONTAINER_NAME: chatbot-ai
-  RESOURCE_GROUP: rg-acr-demo
-  CLUSTER_NAME: aks-demo-cluster
-  DEPLOYMENT_MANIFEST_PATH: k8s/
+  ACR_NAME: acrmsassignment2025
+  ACR_LOGIN_SERVER: acrmsassignment2025.azurecr.io
+  AKS_CLUSTER_NAME: aks-demo-cluster
+  AKS_RESOURCE_GROUP: rg-acr-demo
+  APP_NAME: chatbot-ai
 
 jobs:
-  build-and-deploy:
+  security-scan:
     runs-on: ubuntu-latest
-    
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      - name: 🛡️ Microsoft Security DevOps
+        uses: microsoft/security-devops-action@v1.6.0
+        with:
+          categories: 'secrets,code,dependencies'
 
-    - name: 🔐 Login to Azure
-      uses: azure/login@v2
-      with:
-        creds: |
-          {
-            "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
-            "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}",
-            "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
-            "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
-          }
+      - name: 🐳 Build Docker image
+        run: docker build -t ${{ env.APP_NAME }}:latest .
 
-    - name: Log in to Azure Container Registry
-      run: |
-        az acr login --name ${{ env.AZURE_CONTAINER_REGISTRY }}
+      - name: 🛡️ Scan container vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ env.APP_NAME }}:latest'
+          format: 'table'
 
-    - name: Build and push Docker image
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        push: true
-        tags: |
-          ${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.CONTAINER_NAME }}:latest
-          ${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.CONTAINER_NAME }}:${{ github.sha }}
+  deploy:
+    needs: security-scan
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-    - name: Set up kubectl
-      uses: azure/setup-kubectl@v3
+      - name: 🔐 Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: |
+            {
+              "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
+              "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}",
+              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+              "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
+            }
 
-    - name: Get AKS credentials
-      run: |
-        az aks get-credentials --resource-group ${{ env.RESOURCE_GROUP }} --name ${{ env.CLUSTER_NAME }}
+      - name: 🐳 Build and push to ACR
+        run: |
+          az acr login --name ${{ env.ACR_NAME }}
+          docker build -t ${{ env.ACR_LOGIN_SERVER }}/${{ env.APP_NAME }}:${{ github.sha }} .
+          docker push ${{ env.ACR_LOGIN_SERVER }}/${{ env.APP_NAME }}:${{ github.sha }}
 
-    - name: Create namespace if not exists
-      run: |
-        kubectl create namespace chatbot-ai --dry-run=client -o yaml | kubectl apply -f -
+      - name: 🔧 Install kubelogin
+        run: |
+          # Download and install kubelogin
+          curl -LO https://github.com/Azure/kubelogin/releases/download/v0.0.32/kubelogin-linux-amd64.zip
+          unzip kubelogin-linux-amd64.zip
+          sudo mv bin/linux_amd64/kubelogin /usr/local/bin/
+          chmod +x /usr/local/bin/kubelogin
 
-    - name: Create/Update Kubernetes secrets
-      run: |
-        kubectl create secret generic aws-bedrock-secrets \
-          --from-literal=AWS_ACCESS_KEY="${{ secrets.AWS_ACCESS_KEY }}" \
-          --from-literal=AWS_SECRET_KEY="${{ secrets.AWS_SECRET_KEY }}" \
-          --from-literal=AWS_REGION="${{ secrets.AWS_REGION }}" \
-          --from-literal=MODEL_ID="${{ secrets.MODEL_ID }}" \
-          --from-literal=SYSTEM_PROMPT="${{ secrets.SYSTEM_PROMPT }}" \
-          --namespace=chatbot-ai \
-          --dry-run=client -o yaml | kubectl apply -f -
+      - name: 🎯 Get AKS credentials
+        run: |
+          az aks get-credentials --resource-group ${{ env.AKS_RESOURCE_GROUP }} --name ${{ env.AKS_CLUSTER_NAME }} --admin --overwrite-existing
 
-    - name: Deploy to AKS
-      run: |
-        # Replace image tag in deployment
-        sed -i "s|IMAGE_TAG|${{ github.sha }}|g" ${{ env.DEPLOYMENT_MANIFEST_PATH }}deployment.yaml
-        sed -i "s|ACR_NAME|${{ env.AZURE_CONTAINER_REGISTRY }}|g" ${{ env.DEPLOYMENT_MANIFEST_PATH }}deployment.yaml
-        
-        # Apply Kubernetes manifests
-        kubectl apply -f ${{ env.DEPLOYMENT_MANIFEST_PATH }} --namespace=chatbot-ai
-
-    - name: Verify deployment
-      run: |
-        kubectl rollout status deployment/chatbot-ai --namespace=chatbot-ai --timeout=300s
-        kubectl get services --namespace=chatbot-ai
+      - name: 🚀 Deploy to AKS
+        run: |
+          # Create namespace if it doesn't exist
+          kubectl create namespace chatbot-ai --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Create/Update Kubernetes secrets for AWS Bedrock
+          kubectl create secret generic aws-bedrock-secrets \
+            --from-literal=AWS_ACCESS_KEY="${{ secrets.AWS_ACCESS_KEY }}" \
+            --from-literal=AWS_SECRET_KEY="${{ secrets.AWS_SECRET_KEY }}" \
+            --from-literal=AWS_REGION="${{ secrets.AWS_REGION }}" \
+            --from-literal=MODEL_ID="${{ secrets.MODEL_ID }}" \
+            --from-literal=SYSTEM_PROMPT="${{ secrets.SYSTEM_PROMPT }}" \
+            --namespace=chatbot-ai \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Update deployment with image tag
+          sed -i "s|IMAGE_TAG|${{ github.sha }}|g" k8s/deployment.yaml
+          sed -i "s|ACR_NAME|${{ env.ACR_NAME }}|g" k8s/deployment.yaml
+          
+          # Apply all configurations
+          kubectl apply -f k8s/ --namespace=chatbot-ai --validate=false
+          
+          # Check rollout status
+          kubectl rollout status deployment/${{ env.APP_NAME }} -n chatbot-ai --timeout=300s
+          
+          # Display service information
+          echo "🌐 Service Details:"
+          kubectl get services -n chatbot-ai
+          
+          # Extract and display the external IP for LoadBalancer
+          EXTERNAL_IP=$(kubectl get svc chatbot-ai-service -n chatbot-ai -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "pending")
+          if [ "$EXTERNAL_IP" != "pending" ] && [ ! -z "$EXTERNAL_IP" ]; then
+            echo "🎯 Your ChatBot AI is available at: http://$EXTERNAL_IP"
+          else
+            echo "⏳ External IP is still being assigned. Check later with: kubectl get svc chatbot-ai-service -n chatbot-ai"
+          fi
+          
+          echo "✅ ChatBot AI deployment completed successfully!"
