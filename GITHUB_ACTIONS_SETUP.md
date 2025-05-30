@@ -44,7 +44,7 @@ Edit [`.github/workflows/deploy-to-aks.yml`](.github/workflows/deploy-to-aks.yml
 env:
   AZURE_CONTAINER_REGISTRY: your-acr-name  # Replace with your ACR name
   RESOURCE_GROUP: myResourceGroup          # Replace with your resource group
-  CLUSTER_NAME: myAKSCluster              # Replace with your AKS cluster name.,
+  CLUSTER_NAME: myAKSCluster              # Replace with your AKS cluster name
 ```
 
 ## 🏗️ Step 3: Create Azure Service Principal
