@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chatbot-ai
+  namespace: chatbot-ai
+  labels:
+    app: chatbot-ai
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: chatbot-ai
+  template:
+    metadata:
+      labels:
+        app: chatbot-ai
+        version: v1
+    spec:
+      containers:
+      - name: chatbot-ai
+        image: ACR_NAME.azurecr.io/chatbot-ai:IMAGE_TAG
+        ports:
+        - containerPort: 5000
+          name: http
+        env:
+        - name: AWS_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: aws-bedrock-secrets
+              key: AWS_ACCESS_KEY
+        - name: AWS_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: aws-bedrock-secrets
+              key: AWS_SECRET_KEY
+        - name: AWS_REGION
+          valueFrom:
+            secretKeyRef:
+              name: aws-bedrock-secrets
+              key: AWS_REGION
+        - name: MODEL_ID
+          valueFrom:
+            secretKeyRef:
+              name: aws-bedrock-secrets
+              key: MODEL_ID
+        - name: SYSTEM_PROMPT
+          valueFrom:
+            secretKeyRef:
+              name: aws-bedrock-secrets
+              key: SYSTEM_PROMPT
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+            - ALL
+      restartPolicy: Always
+      securityContext:
+        fsGroup: 1000
