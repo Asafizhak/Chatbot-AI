@@ -81,4 +81,4 @@ jobs:
             echo "⏳ External IP is still being assigned. Check later with: kubectl get svc chatbot-ai-service -n chatbot-ai"
           fi
           
-          echo "✅ ChatBot AI deployment completed successfully!"
+          echo "✅ ChatBot AI deployment completed successfully!!"
