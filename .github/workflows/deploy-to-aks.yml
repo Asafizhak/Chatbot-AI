@@ -50,6 +50,9 @@ jobs:
           # Create namespace if it doesn't exist
           kubectl create namespace chatbot-ai --dry-run=client -o yaml | kubectl apply -f -
           
+          # Create ingress-nginx namespace if it doesn't exist
+          kubectl create namespace ingress-nginx --dry-run=client -o yaml | kubectl apply -f -
+          
           # Create/Update Kubernetes secrets for AWS Bedrock
           kubectl create secret generic aws-bedrock-secrets \
             --from-literal=AWS_ACCESS_KEY="${{ secrets.AWS_ACCESS_KEY }}" \
@@ -67,19 +70,52 @@ jobs:
           # Apply all configurations
           kubectl apply -f k8s/ --namespace=chatbot-ai --validate=false
           
+          # Check NGINX Ingress Controller namespace and status
+          echo "🔍 Checking NGINX Ingress Controller..."
+          kubectl get pods -n ingress-nginx
+          kubectl get svc -n ingress-nginx
+          
+          # Clean up any duplicate LoadBalancer in wrong namespace
+          if kubectl get svc nginx-ingress-loadbalancer -n nginx-ingress >/dev/null 2>&1; then
+            echo "🧹 Removing duplicate LoadBalancer from wrong namespace..."
+            kubectl delete svc nginx-ingress-loadbalancer -n nginx-ingress
+          fi
+          
+          # Apply NGINX LoadBalancer only if it doesn't exist (prevent duplicates)
+          if ! kubectl get svc nginx-ingress-loadbalancer -n ingress-nginx >/dev/null 2>&1; then
+            echo "🔧 Creating NGINX LoadBalancer service..."
+            kubectl apply -f k8s/nginx-loadbalancer.yaml
+          else
+            echo "✅ NGINX LoadBalancer service already exists, skipping creation"
+            kubectl get svc nginx-ingress-loadbalancer -n ingress-nginx
+          fi
+          
           # Check rollout status
           kubectl rollout status deployment/${{ env.APP_NAME }} -n chatbot-ai --timeout=600s
+          
+          # Verify ingress deployment
+          kubectl get ingress -n chatbot-ai
+          
+          # Verify LoadBalancer has endpoints
+          echo "🔍 Checking LoadBalancer endpoints..."
+          kubectl get endpoints nginx-ingress-loadbalancer -n ingress-nginx
           
           # Display service information
           echo "🌐 Service Details:"
           kubectl get services -n chatbot-ai
           
-          # Extract and display the external IP for LoadBalancer
-          EXTERNAL_IP=$(kubectl get svc chatbot-ai-service -n chatbot-ai -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "pending")
-          if [ "$EXTERNAL_IP" != "pending" ] && [ ! -z "$EXTERNAL_IP" ]; then
-            echo "🎯 Your ChatBot AI is available at: http://$EXTERNAL_IP"
+          # Display stable LoadBalancer IP
+          echo "🌐 LoadBalancer Service Details:"
+          kubectl get svc nginx-ingress-loadbalancer -n ingress-nginx
+          
+          # Extract and display the external IP for easy reference
+          EXTERNAL_IP=$(kubectl get svc nginx-ingress-loadbalancer -n ingress-nginx -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          if [ ! -z "$EXTERNAL_IP" ]; then
+            echo "🎯 Your stable LoadBalancer IP: $EXTERNAL_IP"
+            echo "📝 Update your hosts file with: $EXTERNAL_IP chatbot-ai.local"
+            echo "🌐 Access your ChatBot AI at: http://chatbot-ai.local or http://$EXTERNAL_IP"
           else
-            echo "⏳ External IP is still being assigned. Check later with: kubectl get svc chatbot-ai-service -n chatbot-ai"
+            echo "⏳ LoadBalancer IP is still being assigned."
           fi
           
           echo "✅ ChatBot AI deployment completed successfully!!"
