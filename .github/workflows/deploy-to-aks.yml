@@ -67,28 +67,38 @@ jobs:
           sed -i "s|IMAGE_TAG|${{ github.sha }}|g" k8s/deployment.yaml
           sed -i "s|ACR_NAME|${{ env.ACR_NAME }}|g" k8s/deployment.yaml
           
-          # Apply all configurations
-          kubectl apply -f k8s/ --namespace=chatbot-ai --validate=false
+          # Install NGINX Ingress Controller if not exists
+          echo "🔧 Installing NGINX Ingress Controller..."
+          if ! kubectl get deployment ingress-nginx-controller -n ingress-nginx >/dev/null 2>&1; then
+            echo "📦 Installing NGINX Ingress Controller..."
+            kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.2/deploy/static/provider/cloud/deploy.yaml
+            
+            # Wait for NGINX controller to be ready
+            echo "⏳ Waiting for NGINX controller to be ready..."
+            kubectl wait --namespace ingress-nginx \
+              --for=condition=ready pod \
+              --selector=app.kubernetes.io/component=controller \
+              --timeout=300s
+          else
+            echo "✅ NGINX Ingress Controller already exists"
+          fi
           
-          # Check NGINX Ingress Controller namespace and status
+          # Apply chatbot configurations (excluding ingress first)
+          kubectl apply -f k8s/deployment.yaml --namespace=chatbot-ai
+          kubectl apply -f k8s/service.yaml --namespace=chatbot-ai
+          
+          # Check NGINX Ingress Controller status
           echo "🔍 Checking NGINX Ingress Controller..."
           kubectl get pods -n ingress-nginx
           kubectl get svc -n ingress-nginx
           
-          # Clean up any duplicate LoadBalancer in wrong namespace !
-          if kubectl get svc nginx-ingress-loadbalancer -n nginx-ingress >/dev/null 2>&1; then
-            echo "🧹 Removing duplicate LoadBalancer from wrong namespace..."
-            kubectl delete svc nginx-ingress-loadbalancer -n nginx-ingress
-          fi
+          # Apply NGINX LoadBalancer to correct namespace
+          echo "🔧 Creating NGINX LoadBalancer service..."
+          kubectl apply -f k8s/nginx-loadbalancer.yaml --namespace=ingress-nginx
           
-          # Apply NGINX LoadBalancer only if it doesn't exist (prevent duplicates)
-          if ! kubectl get svc nginx-ingress-loadbalancer -n ingress-nginx >/dev/null 2>&1; then
-            echo "🔧 Creating NGINX LoadBalancer service..."
-            kubectl apply -f k8s/nginx-loadbalancer.yaml
-          else
-            echo "✅ NGINX LoadBalancer service already exists, skipping creation"
-            kubectl get svc nginx-ingress-loadbalancer -n ingress-nginx
-          fi
+          # Now apply ingress after NGINX is ready
+          echo "🌐 Applying ingress configuration..."
+          kubectl apply -f k8s/ingress.yaml --namespace=chatbot-ai
           
           # Check rollout status
           kubectl rollout status deployment/${{ env.APP_NAME }} -n chatbot-ai --timeout=600s
