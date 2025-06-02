@@ -75,7 +75,7 @@ jobs:
           kubectl get pods -n ingress-nginx
           kubectl get svc -n ingress-nginx
           
-          # Clean up any duplicate LoadBalancer in wrong namespace
+          # Clean up any duplicate LoadBalancer in wrong namespace !
           if kubectl get svc nginx-ingress-loadbalancer -n nginx-ingress >/dev/null 2>&1; then
             echo "🧹 Removing duplicate LoadBalancer from wrong namespace..."
             kubectl delete svc nginx-ingress-loadbalancer -n nginx-ingress
